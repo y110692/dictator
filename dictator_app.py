@@ -29,6 +29,53 @@ VK_SHIFT = 0x10
 VK_MENU = 0x12
 VK_V = 0x56
 VK_F10 = 0x79
+TK_CTRL_MASK = 0x0004
+TK_SHIFT_MASK = 0x0001
+TK_ALT_MASK = 0x0008
+TK_WIN_MASK = 0x0040
+
+
+def normalize_tk_key(keysym: str) -> str:
+    key = keysym.strip().lower()
+    aliases = {
+        "control_l": "ctrl",
+        "control_r": "ctrl",
+        "shift_l": "shift",
+        "shift_r": "shift",
+        "alt_l": "alt",
+        "alt_r": "alt",
+        "menu": "alt",
+        "win_l": "windows",
+        "win_r": "windows",
+        "super_l": "windows",
+        "super_r": "windows",
+        "prior": "page up",
+        "next": "page down",
+        "return": "enter",
+        "escape": "esc",
+        "space": "space",
+    }
+    return aliases.get(key, key)
+
+
+def format_hotkey_from_tk_event(keysym: str, state: int) -> str | None:
+    key = normalize_tk_key(keysym)
+    if not key or key in {"ctrl", "shift", "alt", "windows"}:
+        return None
+
+    parts: list[str] = []
+    if state & TK_CTRL_MASK:
+        parts.append("ctrl")
+    if state & TK_ALT_MASK:
+        parts.append("alt")
+    if state & TK_SHIFT_MASK:
+        parts.append("shift")
+    if state & TK_WIN_MASK:
+        parts.append("windows")
+
+    if key not in parts:
+        parts.append(key)
+    return "+".join(parts)
 
 
 class TimestampedTee:
@@ -92,6 +139,32 @@ def load_env_file() -> None:
             value = value[1:-1]
         if name:
             os.environ.setdefault(name, value)
+
+
+def set_env_value(name: str, value: str) -> None:
+    env_path = PROJECT_ROOT / ".env"
+    lines = env_path.read_text(encoding="utf-8-sig").splitlines() if env_path.exists() else []
+    output: list[str] = []
+    updated = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in raw_line:
+            output.append(raw_line)
+            continue
+
+        current_name, _ = raw_line.split("=", 1)
+        if current_name.strip().lstrip("\ufeff") == name:
+            output.append(f"{name}={value}")
+            updated = True
+        else:
+            output.append(raw_line)
+
+    if not updated:
+        output.append(f"{name}={value}")
+
+    env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+    os.environ[name] = value
 
 
 load_env_file()
@@ -380,6 +453,9 @@ class DictatorApp:
         self.running = True
         self.icon: Any | None = None
         self.recording_target_hwnd: int | None = None
+        self.hotkey_hooks: list[tuple[str, Any]] = []
+        self.hotkey_lock = threading.Lock()
+        self.hotkey_dialog_open = False
 
     def run(self) -> None:
         print(f"Hotkey: {self.hotkey}")
@@ -393,12 +469,7 @@ class DictatorApp:
         if not self.lazy:
             threading.Thread(target=self._safe_preload, daemon=True).start()
 
-        if "+" in self.hotkey:
-            print("Combination hotkey detected; using toggle mode.")
-            keyboard.add_hotkey(self.hotkey, self.toggle, suppress=self.suppress_hotkey)
-        else:
-            keyboard.on_press_key(self.hotkey, lambda event: self._on_hotkey_press(event), suppress=self.suppress_hotkey)
-            keyboard.on_release_key(self.hotkey, lambda event: self._on_hotkey_release(event), suppress=self.suppress_hotkey)
+        self._register_hotkey(self.hotkey)
 
         if self.no_tray:
             keyboard.wait()
@@ -406,6 +477,62 @@ class DictatorApp:
 
         if not self._run_tray():
             keyboard.wait()
+
+    def _register_hotkey(self, hotkey: str) -> None:
+        with self.hotkey_lock:
+            self._unregister_hotkey_locked()
+            if "+" in hotkey:
+                print("Combination hotkey detected; using toggle mode.")
+                handle = keyboard.add_hotkey(hotkey, self.toggle, suppress=self.suppress_hotkey)
+                self.hotkey_hooks.append(("hotkey", handle))
+            else:
+                keyboard.on_press_key(
+                    hotkey,
+                    lambda event: self._on_hotkey_press(event),
+                    suppress=self.suppress_hotkey,
+                )
+                keyboard.on_release_key(
+                    hotkey,
+                    lambda event: self._on_hotkey_release(event),
+                    suppress=self.suppress_hotkey,
+                )
+                self.hotkey_hooks.append(("key", hotkey))
+            self.hotkey = hotkey
+            print(f"Registered hotkey: {self.hotkey}")
+
+    def _unregister_hotkey_locked(self) -> None:
+        for kind, handle in self.hotkey_hooks:
+            try:
+                if kind == "hotkey":
+                    keyboard.remove_hotkey(handle)
+                elif kind == "key":
+                    keyboard.unhook_key(handle)
+                else:
+                    keyboard.unhook(handle)
+            except Exception as exc:
+                print(f"Failed to unregister hotkey hook: {exc}", file=sys.stderr)
+        self.hotkey_hooks = []
+
+    def change_hotkey(self, hotkey: str) -> None:
+        hotkey = hotkey.strip().lower()
+        if not hotkey:
+            raise ValueError("Hotkey is empty.")
+        with self.state_lock:
+            if self.recording:
+                raise RuntimeError("Cannot change hotkey while recording.")
+        previous = self.hotkey
+        try:
+            self._register_hotkey(hotkey)
+        except Exception:
+            if previous:
+                try:
+                    self._register_hotkey(previous)
+                except Exception as restore_exc:
+                    print(f"Failed to restore previous hotkey {previous}: {restore_exc}", file=sys.stderr)
+            raise
+        set_env_value("DICTATOR_HOTKEY", hotkey)
+        print(f"Hotkey changed: {previous} -> {hotkey}")
+        self._set_status(f"Ready ({hotkey})")
 
     def toggle(self) -> None:
         print("Hotkey toggle event")
@@ -456,7 +583,8 @@ class DictatorApp:
 
     def quit(self) -> None:
         self.running = False
-        keyboard.unhook_all_hotkeys()
+        with self.hotkey_lock:
+            self._unregister_hotkey_locked()
         with self.state_lock:
             if self.recording:
                 self.recording = False
@@ -464,6 +592,114 @@ class DictatorApp:
         self.jobs.put(None)
         if self.icon is not None:
             self.icon.stop()
+
+    def open_hotkey_window(self) -> None:
+        with self.hotkey_lock:
+            if self.hotkey_dialog_open:
+                print("Hotkey dialog is already open.")
+                return
+            self.hotkey_dialog_open = True
+        threading.Thread(target=self._run_hotkey_window, daemon=True).start()
+
+    def _run_hotkey_window(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+        except Exception as exc:
+            print(f"Hotkey dialog unavailable: {exc}", file=sys.stderr)
+            with self.hotkey_lock:
+                self.hotkey_dialog_open = False
+            return
+
+        captured = {"value": ""}
+        saved = {"value": False}
+        suspended_hotkey = self.hotkey
+
+        with self.hotkey_lock:
+            self._unregister_hotkey_locked()
+        print(f"Hotkey capture dialog opened; suspended hotkey: {suspended_hotkey}")
+
+        def close() -> None:
+            if not saved["value"] and self.running:
+                try:
+                    self._register_hotkey(suspended_hotkey)
+                except Exception as exc:
+                    print(f"Failed to restore hotkey after dialog close: {exc}", file=sys.stderr)
+            with self.hotkey_lock:
+                self.hotkey_dialog_open = False
+            root.destroy()
+
+        def on_key_press(event: Any) -> str:
+            hotkey = format_hotkey_from_tk_event(str(event.keysym), int(event.state))
+            if hotkey is None:
+                status_var.set("Зажмите Ctrl/Alt/Shift/Win и нажмите основную клавишу")
+                return "break"
+            captured["value"] = hotkey
+            hotkey_var.set(hotkey)
+            status_var.set("Нажмите «Сохранить», чтобы применить")
+            return "break"
+
+        def save() -> None:
+            hotkey = captured["value"].strip()
+            if not hotkey:
+                messagebox.showwarning("Hotkey", "Нажмите новую клавишу или комбинацию.")
+                return
+            try:
+                self.change_hotkey(hotkey)
+            except Exception as exc:
+                messagebox.showerror("Hotkey", f"Не удалось применить hotkey:\n{exc}")
+                return
+            saved["value"] = True
+            close()
+
+        root = tk.Tk()
+        root.title("Dictator: горячая клавиша")
+        root.resizable(False, False)
+        root.attributes("-topmost", True)
+        root.protocol("WM_DELETE_WINDOW", close)
+
+        frame = tk.Frame(root, padx=18, pady=16)
+        frame.pack(fill="both", expand=True)
+
+        tk.Label(frame, text="Нажмите новую горячую клавишу", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(frame, text=f"Текущая: {self.hotkey}", fg="#555555").pack(anchor="w", pady=(4, 10))
+
+        hotkey_var = tk.StringVar(value="ожидание...")
+        hotkey_label = tk.Label(
+            frame,
+            textvariable=hotkey_var,
+            font=("Segoe UI", 18, "bold"),
+            width=22,
+            relief="solid",
+            bd=1,
+            padx=8,
+            pady=8,
+        )
+        hotkey_label.pack(fill="x")
+
+        status_var = tk.StringVar(value="Например: F9 или Ctrl+Alt+Space")
+        tk.Label(frame, textvariable=status_var, fg="#555555", wraplength=320).pack(anchor="w", pady=(8, 14))
+
+        buttons = tk.Frame(frame)
+        buttons.pack(fill="x")
+        tk.Button(buttons, text="Сохранить", width=12, command=save).pack(side="right", padx=(8, 0))
+        tk.Button(buttons, text="Отмена", width=10, command=close).pack(side="right")
+
+        root.bind("<KeyPress>", on_key_press)
+        root.update_idletasks()
+        width = root.winfo_width()
+        height = root.winfo_height()
+        x = max(0, (root.winfo_screenwidth() - width) // 2)
+        y = max(0, (root.winfo_screenheight() - height) // 2)
+        root.geometry(f"{width}x{height}+{x}+{y}")
+        root.lift()
+        root.focus_force()
+        try:
+            if os.name == "nt":
+                ctypes.windll.user32.SetForegroundWindow(root.winfo_id())
+        except Exception as exc:
+            print(f"Hotkey dialog focus failed: {exc}", file=sys.stderr)
+        root.mainloop()
 
     def _worker_loop(self) -> None:
         while self.running:
@@ -537,6 +773,7 @@ class DictatorApp:
 
         menu = pystray.Menu(
             pystray.MenuItem("Start/Stop dictation", lambda: self.toggle()),
+            pystray.MenuItem("Hotkey...", lambda: self.open_hotkey_window()),
             pystray.MenuItem("Quit", lambda: self.quit()),
         )
         self.icon = pystray.Icon(

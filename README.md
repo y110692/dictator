@@ -163,6 +163,7 @@ Hotkey can be changed in either place:
 
 - Persistent: edit `DICTATOR_HOTKEY` in `.env`.
 - One run only: pass `-Hotkey` on Windows or `--hotkey` on macOS.
+- Windows tray: right-click the tray icon, choose `Hotkey...`, press a new hotkey, then click Save.
 
 Examples:
 
