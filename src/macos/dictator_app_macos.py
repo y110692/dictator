@@ -20,6 +20,8 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "openai/whisper-1"
 OPENROUTER_FALLBACK_MODEL = "openai/gpt-audio-mini"
 DEFAULT_TRANSCRIPTION_PROMPT = "Transcribe this Russian speech to plain text. Return only the transcript."
+DEFAULT_TRANSCRIPTION_REFERER = "https://localhost/dictator"
+DEFAULT_TRANSCRIPTION_TITLE = "Dictator"
 
 
 class TimestampedTee:
@@ -72,6 +74,24 @@ def load_env_file() -> None:
             value = value[1:-1]
         if name:
             os.environ.setdefault(name, value)
+
+
+def env_value(name: str, legacy_name: str, default: str = "") -> str:
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    value = os.environ.get(legacy_name, "").strip()
+    if value:
+        return value
+    return default
+
+
+def optional_env_value(name: str, legacy_name: str, default: str = "") -> str:
+    if name in os.environ:
+        return os.environ.get(name, "").strip()
+    if legacy_name in os.environ:
+        return os.environ.get(legacy_name, "").strip()
+    return default
 
 
 def set_env_value(name: str, value: str) -> None:
@@ -244,11 +264,17 @@ class AudioRecorder:
 class OpenRouterWhisperTranscriber:
     def __init__(self) -> None:
         self.api_key: str | None = None
-        self.api_url = os.environ.get("OPENROUTER_API_URL", OPENROUTER_API_URL)
-        self.model = os.environ.get("OPENROUTER_MODEL", OPENROUTER_MODEL)
-        self.fallback_model = os.environ.get("OPENROUTER_FALLBACK_MODEL", OPENROUTER_FALLBACK_MODEL).strip()
-        self.prompt = os.environ.get("OPENROUTER_TRANSCRIPTION_PROMPT", DEFAULT_TRANSCRIPTION_PROMPT)
-        self.timeout = float(os.environ.get("OPENROUTER_TIMEOUT", "120"))
+        self.api_url = env_value("TRANSCRIPTION_API_URL", "OPENROUTER_API_URL", OPENROUTER_API_URL)
+        self.model = env_value("TRANSCRIPTION_MODEL", "OPENROUTER_MODEL", OPENROUTER_MODEL)
+        self.fallback_model = optional_env_value(
+            "TRANSCRIPTION_FALLBACK_MODEL",
+            "OPENROUTER_FALLBACK_MODEL",
+            OPENROUTER_FALLBACK_MODEL,
+        )
+        self.prompt = env_value("TRANSCRIPTION_PROMPT", "OPENROUTER_TRANSCRIPTION_PROMPT", DEFAULT_TRANSCRIPTION_PROMPT)
+        self.timeout = float(env_value("TRANSCRIPTION_TIMEOUT", "OPENROUTER_TIMEOUT", "120"))
+        self.referer = optional_env_value("TRANSCRIPTION_REFERER", "OPENROUTER_HTTP_REFERER", DEFAULT_TRANSCRIPTION_REFERER)
+        self.title = optional_env_value("TRANSCRIPTION_TITLE", "OPENROUTER_TITLE", DEFAULT_TRANSCRIPTION_TITLE)
         self.lock = threading.Lock()
 
     def load(self) -> None:
@@ -256,14 +282,14 @@ class OpenRouterWhisperTranscriber:
             if self.api_key is not None:
                 return
 
-            api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+            api_key = env_value("TRANSCRIPTION_API_KEY", "OPENROUTER_API_KEY")
             if not api_key:
-                raise RuntimeError("OPENROUTER_API_KEY is not set. Put it in .env or the process environment.")
+                raise RuntimeError("TRANSCRIPTION_API_KEY is not set. Put it in .env or the process environment.")
 
             self.api_key = api_key
-            print(f"OpenRouter transcription ready: {self.model}")
+            print(f"Transcription API ready: {self.model}")
             if self.fallback_model and self.fallback_model != self.model:
-                print(f"OpenRouter fallback model: {self.fallback_model}")
+                print(f"Transcription fallback model: {self.fallback_model}")
 
     def transcribe(self, wav_path: Path) -> str:
         self.load()
@@ -277,7 +303,7 @@ class OpenRouterWhisperTranscriber:
         except RuntimeError as exc:
             if not self.fallback_model or self.fallback_model == self.model:
                 raise
-            print(f"Primary OpenRouter model failed ({self.model}); retrying {self.fallback_model}: {exc}", file=sys.stderr)
+            print(f"Primary transcription model failed ({self.model}); retrying {self.fallback_model}: {exc}", file=sys.stderr)
             data = self._post_transcription(self.fallback_model, audio_data)
 
         return self._extract_transcript(data)
@@ -300,23 +326,25 @@ class OpenRouterWhisperTranscriber:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://localhost/dictator",
-            "X-OpenRouter-Title": "Dictator",
         }
+        if self.referer:
+            headers["HTTP-Referer"] = self.referer
+        if self.title:
+            headers["X-OpenRouter-Title"] = self.title
 
         with self.lock:
-            print(f"OpenRouter request model={model} url={self.api_url}")
+            print(f"Transcription API request model={model} url={self.api_url}")
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=self.timeout)
 
         elapsed = time.monotonic() - started_at
-        print(f"OpenRouter response model={model} status={response.status_code} elapsed={elapsed:.2f}s")
+        print(f"Transcription API response model={model} status={response.status_code} elapsed={elapsed:.2f}s")
         if response.status_code >= 400:
-            raise RuntimeError(f"OpenRouter error {response.status_code}: {self._extract_error(response)}")
+            raise RuntimeError(f"Transcription API error {response.status_code}: {self._extract_error(response)}")
 
         try:
             return response.json()
         except ValueError as exc:
-            raise RuntimeError(f"OpenRouter returned non-JSON response: {response.text[:500]}") from exc
+            raise RuntimeError(f"Transcription API returned non-JSON response: {response.text[:500]}") from exc
 
     def _extract_transcript(self, data: dict[str, Any]) -> str:
         direct_text = data.get("text")
@@ -640,7 +668,7 @@ class MacDictatorApp:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="macOS hotkey dictation with OpenRouter Whisper.")
+    parser = argparse.ArgumentParser(description="macOS hotkey dictation with a configurable transcription API.")
     parser.add_argument(
         "--hotkey",
         default=os.environ.get("DICTATOR_HOTKEY", "f10"),

@@ -67,12 +67,14 @@ if (-not (Test-Path -LiteralPath $PythonExe)) {
 
 if ($ApiKey) {
     $envContent = @(
-        "OPENROUTER_API_KEY=$ApiKey",
-        "OPENROUTER_MODEL=openai/whisper-1",
-        "OPENROUTER_FALLBACK_MODEL=openai/gpt-audio-mini",
-        "OPENROUTER_API_URL=https://openrouter.ai/api/v1/chat/completions",
-        "OPENROUTER_TIMEOUT=120",
-        "OPENROUTER_TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.",
+        "TRANSCRIPTION_API_KEY=$ApiKey",
+        "TRANSCRIPTION_MODEL=openai/whisper-1",
+        "TRANSCRIPTION_FALLBACK_MODEL=openai/gpt-audio-mini",
+        "TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/chat/completions",
+        "TRANSCRIPTION_TIMEOUT=120",
+        "TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.",
+        "TRANSCRIPTION_REFERER=https://localhost/dictator",
+        "TRANSCRIPTION_TITLE=Dictator",
         "DICTATOR_HOTKEY=$Hotkey",
         "DICTATOR_LOG_FILE=runtime/dictator.log"
     )

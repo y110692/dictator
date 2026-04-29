@@ -1,6 +1,6 @@
 # Dictator Whisper
 
-Hotkey dictation for Windows and macOS. Press a global hotkey, speak, release it; the app sends the recording to OpenRouter, copies the transcript to the clipboard, and pastes it into the active text field.
+Hotkey dictation for Windows and macOS. Press a global hotkey, speak, release it; the app sends the recording to the configured transcription provider, copies the transcript to the clipboard, and pastes it into the active text field.
 
 There are separate launchers for each OS:
 
@@ -22,14 +22,14 @@ runtime/               local logs and last recording, ignored by Git
 
 - Global hotkey dictation.
 - Configurable hotkey through `.env` or launch arguments.
-- OpenRouter transcription, defaulting to `openai/whisper-1` with `openai/gpt-audio-mini` fallback.
+- Configurable transcription provider. The default is OpenRouter `openai/whisper-1` with `openai/gpt-audio-mini` fallback.
 - Tray/menu-bar icon with status dot: green ready, red recording, yellow transcribing.
 - Local debug log and last recorded WAV.
 - Optional autostart on Windows login or macOS login.
 
 ## Requirements
 
-- OpenRouter API key with credits: <https://openrouter.ai/keys>
+- API key for OpenRouter or another compatible transcription provider. Default OpenRouter keys: <https://openrouter.ai/keys>
 - Python 3.11 or 3.12.
 - Working microphone.
 
@@ -43,19 +43,19 @@ Platform notes:
 Open PowerShell in the project folder:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY" -Autostart
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_API_KEY" -Autostart
 ```
 
 Without autostart:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY"
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_API_KEY"
 ```
 
 Set a hotkey during install:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY" -Hotkey "f9"
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_API_KEY" -Hotkey "f9"
 ```
 
 Run manually:
@@ -84,20 +84,20 @@ Open Terminal in the project folder:
 
 ```bash
 chmod +x scripts/macos/install_macos.sh scripts/macos/run_macos.sh
-./scripts/macos/install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY" --autostart
+./scripts/macos/install_macos.sh --api-key "YOUR_API_KEY" --autostart
 ```
 
 Without autostart:
 
 ```bash
 chmod +x scripts/macos/install_macos.sh scripts/macos/run_macos.sh
-./scripts/macos/install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY"
+./scripts/macos/install_macos.sh --api-key "YOUR_API_KEY"
 ```
 
 Set a hotkey during install:
 
 ```bash
-./scripts/macos/install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY" --hotkey "f9"
+./scripts/macos/install_macos.sh --api-key "YOUR_API_KEY" --hotkey "f9"
 ```
 
 Run manually:
@@ -160,15 +160,30 @@ Hotkey behavior:
 The installers create `.env`. You can also copy `.env.example` to `.env` and edit it manually.
 
 ```text
-OPENROUTER_API_KEY=your_key_here
-OPENROUTER_MODEL=openai/whisper-1
-OPENROUTER_FALLBACK_MODEL=openai/gpt-audio-mini
-OPENROUTER_API_URL=https://openrouter.ai/api/v1/chat/completions
-OPENROUTER_TIMEOUT=120
-OPENROUTER_TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.
+TRANSCRIPTION_API_KEY=your_key_here
+TRANSCRIPTION_MODEL=openai/whisper-1
+TRANSCRIPTION_FALLBACK_MODEL=openai/gpt-audio-mini
+TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/chat/completions
+TRANSCRIPTION_TIMEOUT=120
+TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.
+TRANSCRIPTION_REFERER=https://localhost/dictator
+TRANSCRIPTION_TITLE=Dictator
 DICTATOR_HOTKEY=f10
 DICTATOR_LOG_FILE=runtime/dictator.log
 ```
+
+Provider settings live in `.env`, so you can switch API keys or compatible providers without editing code:
+
+- `TRANSCRIPTION_API_KEY`: provider API key.
+- `TRANSCRIPTION_API_URL`: chat completions endpoint.
+- `TRANSCRIPTION_MODEL`: primary model.
+- `TRANSCRIPTION_FALLBACK_MODEL`: optional retry model; leave empty to disable fallback.
+- `TRANSCRIPTION_PROMPT`: transcription instruction sent with the audio.
+- `TRANSCRIPTION_REFERER` and `TRANSCRIPTION_TITLE`: optional metadata headers; useful for OpenRouter, usually ignored by other providers.
+
+The built-in request format is OpenAI-compatible `chat/completions` JSON with audio passed as `input_audio` in the message content. That works for OpenRouter and may work with other providers that implement the same format. If a provider uses a different endpoint shape, for example multipart `/audio/transcriptions`, add a small adapter in `OpenRouterWhisperTranscriber._post_transcription`.
+
+Existing `.env` files with `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL`, `OPENROUTER_API_URL`, `OPENROUTER_TIMEOUT`, and `OPENROUTER_TRANSCRIPTION_PROMPT` still work. New `TRANSCRIPTION_*` variables take priority when both are present.
 
 Hotkey can be changed in either place:
 
@@ -203,7 +218,7 @@ runtime/dictator.log
 runtime/last_recording.wav
 ```
 
-`last_recording.wav` is overwritten on every recording and is sent to OpenRouter for transcription.
+`last_recording.wav` is overwritten on every recording and is sent to the configured transcription provider.
 
 ## Troubleshooting
 
@@ -212,7 +227,7 @@ If nothing is pasted, check `runtime/dictator.log`. A successful path includes:
 ```text
 Hotkey press event
 AudioRecorder.stop wrote=...
-OpenRouter response ... status=200
+Transcription API response ... status=200
 Recognized: ...
 Sent Ctrl+V result: True
 ```
@@ -225,10 +240,10 @@ Sent Command+V result: True
 
 If recording is empty or too quiet, set the correct default microphone in system settings.
 
-If OpenRouter returns errors for `openai/whisper-1`, keep the fallback enabled. The app will retry with `openai/gpt-audio-mini`.
+If the primary transcription model returns errors, keep the fallback enabled. The app will retry with `TRANSCRIPTION_FALLBACK_MODEL`.
 
 If the hotkey conflicts with another app, set another one in `.env`.
 
 ## Security
 
-Do not commit `.env`. It contains your OpenRouter API key and is already listed in `.gitignore`.
+Do not commit `.env`. It contains your provider API key and is already listed in `.gitignore`.

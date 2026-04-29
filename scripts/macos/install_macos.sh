@@ -65,18 +65,20 @@ fi
 
 if [[ -n "$API_KEY" ]]; then
   cat > "$PROJECT_ROOT/.env" <<EOF
-OPENROUTER_API_KEY=$API_KEY
-OPENROUTER_MODEL=openai/whisper-1
-OPENROUTER_FALLBACK_MODEL=openai/gpt-audio-mini
-OPENROUTER_API_URL=https://openrouter.ai/api/v1/chat/completions
-OPENROUTER_TIMEOUT=120
-OPENROUTER_TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.
+TRANSCRIPTION_API_KEY=$API_KEY
+TRANSCRIPTION_MODEL=openai/whisper-1
+TRANSCRIPTION_FALLBACK_MODEL=openai/gpt-audio-mini
+TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/chat/completions
+TRANSCRIPTION_TIMEOUT=120
+TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.
+TRANSCRIPTION_REFERER=https://localhost/dictator
+TRANSCRIPTION_TITLE=Dictator
 DICTATOR_HOTKEY=$HOTKEY
 DICTATOR_LOG_FILE=runtime/dictator.log
 EOF
 elif [[ ! -f "$PROJECT_ROOT/.env" ]]; then
   cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
-  echo "Created .env from .env.example. Edit OPENROUTER_API_KEY before running."
+  echo "Created .env from .env.example. Edit TRANSCRIPTION_API_KEY before running."
 fi
 
 chmod +x "$PROJECT_ROOT/scripts/macos/run_macos.sh"
