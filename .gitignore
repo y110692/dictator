@@ -1,0 +1,13 @@
+.venv/
+.env
+.hf_home/
+.nemo_home/
+.cache/
+models/
+runtime/
+dist/
+__pycache__/
+*.pyc
+*.zip
+.DS_Store
+SSH GITHUB/
