@@ -29,6 +29,8 @@ VK_SHIFT = 0x10
 VK_MENU = 0x12
 VK_V = 0x56
 VK_F10 = 0x79
+VK_LWIN = 0x5B
+VK_RWIN = 0x5C
 TK_CTRL_MASK = 0x0004
 TK_SHIFT_MASK = 0x0001
 TK_ALT_MASK = 0x0008
@@ -58,12 +60,29 @@ def normalize_tk_key(keysym: str) -> str:
     return aliases.get(key, key)
 
 
-def format_hotkey_from_tk_event(keysym: str, state: int) -> str | None:
-    key = normalize_tk_key(keysym)
-    if not key or key in {"ctrl", "shift", "alt", "windows"}:
-        return None
+def is_vk_pressed(vk: int) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+    except Exception:
+        return False
 
-    parts: list[str] = []
+
+def get_modifier_parts(state: int, prefer_physical: bool = True) -> list[str]:
+    if prefer_physical and os.name == "nt":
+        parts: list[str] = []
+        if is_vk_pressed(VK_CONTROL):
+            parts.append("ctrl")
+        if is_vk_pressed(VK_MENU):
+            parts.append("alt")
+        if is_vk_pressed(VK_SHIFT):
+            parts.append("shift")
+        if is_vk_pressed(VK_LWIN) or is_vk_pressed(VK_RWIN):
+            parts.append("windows")
+        return parts
+
+    parts = []
     if state & TK_CTRL_MASK:
         parts.append("ctrl")
     if state & TK_ALT_MASK:
@@ -72,6 +91,15 @@ def format_hotkey_from_tk_event(keysym: str, state: int) -> str | None:
         parts.append("shift")
     if state & TK_WIN_MASK:
         parts.append("windows")
+    return parts
+
+
+def format_hotkey_from_tk_event(keysym: str, state: int, prefer_physical: bool = True) -> str | None:
+    key = normalize_tk_key(keysym)
+    if not key or key in {"ctrl", "shift", "alt", "windows"}:
+        return None
+
+    parts = get_modifier_parts(state, prefer_physical=prefer_physical)
 
     if key not in parts:
         parts.append(key)
@@ -631,6 +659,7 @@ class DictatorApp:
 
         def on_key_press(event: Any) -> str:
             hotkey = format_hotkey_from_tk_event(str(event.keysym), int(event.state))
+            print(f"Hotkey dialog key event keysym={event.keysym} state={int(event.state)} captured={hotkey}")
             if hotkey is None:
                 status_var.set("Зажмите Ctrl/Alt/Shift/Win и нажмите основную клавишу")
                 return "break"
