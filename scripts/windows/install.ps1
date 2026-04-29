@@ -5,7 +5,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\.."))
 $VenvDir = Join-Path $ProjectRoot ".venv"
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 
@@ -79,7 +80,7 @@ if ($ApiKey) {
 }
 
 if ($Autostart) {
-    $RunScript = Join-Path $ProjectRoot "run.ps1"
+    $RunScript = Join-Path $ProjectRoot "scripts\windows\run.ps1"
     $StartupDir = [Environment]::GetFolderPath("Startup")
     $OldStartupScript = Join-Path $StartupDir "DictatorParakeet.vbs"
     $StartupScript = Join-Path $StartupDir "DictatorWhisper.vbs"
@@ -95,5 +96,5 @@ WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hid
 
 Write-Host ""
 Write-Host "Install complete."
-Write-Host "Run: powershell -ExecutionPolicy Bypass -File .\run.ps1"
+Write-Host "Run: powershell -ExecutionPolicy Bypass -File .\scripts\windows\run.ps1"
 Write-Host "Hotkey: $Hotkey"

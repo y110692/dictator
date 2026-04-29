@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON_EXE="$PROJECT_ROOT/.venv/bin/python"
 HOTKEY=""
 LAZY=0
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -x "$PYTHON_EXE" ]]; then
-  echo "Virtual environment not found. Run ./install_macos.sh first." >&2
+  echo "Virtual environment not found. Run ./scripts/macos/install_macos.sh first." >&2
   exit 1
 fi
 
@@ -44,4 +44,4 @@ if [[ "$NO_TRAY" -eq 1 ]]; then
   args+=(--no-tray)
 fi
 
-exec "$PYTHON_EXE" "$PROJECT_ROOT/dictator_app_macos.py" "${args[@]}"
+exec "$PYTHON_EXE" "$PROJECT_ROOT/src/macos/dictator_app_macos.py" "${args[@]}"

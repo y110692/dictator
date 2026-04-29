@@ -5,11 +5,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\.."))
 $PythonExe = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path -LiteralPath $PythonExe)) {
-    throw "Virtual environment not found. Run install.ps1 first."
+    throw "Virtual environment not found. Run scripts\windows\install.ps1 first."
 }
 
 $EnvFile = Join-Path $ProjectRoot ".env"
@@ -37,4 +38,4 @@ if ($Hotkey) { $argsList += @("--hotkey", $Hotkey) }
 if ($Lazy) { $argsList += "--lazy" }
 if ($NoTray) { $argsList += "--no-tray" }
 
-& $PythonExe (Join-Path $ProjectRoot "dictator_app.py") @argsList
+& $PythonExe (Join-Path $ProjectRoot "src\windows\dictator_app.py") @argsList

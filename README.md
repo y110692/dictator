@@ -4,8 +4,19 @@ Hotkey dictation for Windows and macOS. Press a global hotkey, speak, release it
 
 There are separate launchers for each OS:
 
-- Windows: `dictator_app.py`, `install.ps1`, `run.ps1`
-- macOS: `dictator_app_macos.py`, `install_macos.sh`, `run_macos.sh`
+- Windows: `src/windows/dictator_app.py`, `scripts/windows/install.ps1`, `scripts/windows/run.ps1`
+- macOS: `src/macos/dictator_app_macos.py`, `scripts/macos/install_macos.sh`, `scripts/macos/run_macos.sh`
+
+## Project Layout
+
+```text
+assets/icons/          app icons
+scripts/windows/       Windows install and run scripts
+scripts/macos/         macOS install and run scripts
+src/windows/           Windows app source
+src/macos/             macOS app source
+runtime/               local logs and last recording, ignored by Git
+```
 
 ## Features
 
@@ -32,31 +43,31 @@ Platform notes:
 Open PowerShell in the project folder:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY" -Autostart
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY" -Autostart
 ```
 
 Without autostart:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY"
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY"
 ```
 
 Set a hotkey during install:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY" -Hotkey "f9"
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -ApiKey "YOUR_OPENROUTER_API_KEY" -Hotkey "f9"
 ```
 
 Run manually:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run.ps1
 ```
 
 Override hotkey for one run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run.ps1 -Hotkey "f9"
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run.ps1 -Hotkey "f9"
 ```
 
 Windows autostart file:
@@ -72,33 +83,33 @@ Delete that file to disable Windows autostart.
 Open Terminal in the project folder:
 
 ```bash
-chmod +x install_macos.sh run_macos.sh
-./install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY" --autostart
+chmod +x scripts/macos/install_macos.sh scripts/macos/run_macos.sh
+./scripts/macos/install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY" --autostart
 ```
 
 Without autostart:
 
 ```bash
-chmod +x install_macos.sh run_macos.sh
-./install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY"
+chmod +x scripts/macos/install_macos.sh scripts/macos/run_macos.sh
+./scripts/macos/install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY"
 ```
 
 Set a hotkey during install:
 
 ```bash
-./install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY" --hotkey "f9"
+./scripts/macos/install_macos.sh --api-key "YOUR_OPENROUTER_API_KEY" --hotkey "f9"
 ```
 
 Run manually:
 
 ```bash
-./run_macos.sh
+./scripts/macos/run_macos.sh
 ```
 
 Override hotkey for one run:
 
 ```bash
-./run_macos.sh --hotkey "cmd+shift+d"
+./scripts/macos/run_macos.sh --hotkey "cmd+shift+d"
 ```
 
 macOS autostart file:
@@ -163,7 +174,7 @@ Hotkey can be changed in either place:
 
 - Persistent: edit `DICTATOR_HOTKEY` in `.env`.
 - One run only: pass `-Hotkey` on Windows or `--hotkey` on macOS.
-- Windows tray: right-click the tray icon, choose `Hotkey...`, press a new hotkey, then click Save.
+- Tray/menu bar: right-click/click the app icon, choose `Hotkey...`, press a new hotkey, then click Save.
 
 Examples:
 

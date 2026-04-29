@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VENV_DIR="$PROJECT_ROOT/.venv"
 PYTHON_EXE="$VENV_DIR/bin/python"
 API_KEY=""
@@ -36,6 +36,7 @@ find_python() {
 import sys
 raise SystemExit(0 if sys.version_info[:2] in {(3, 11), (3, 12)} else 1)
 PY
+      then
         command -v "$candidate"
         return 0
       fi
@@ -78,7 +79,7 @@ elif [[ ! -f "$PROJECT_ROOT/.env" ]]; then
   echo "Created .env from .env.example. Edit OPENROUTER_API_KEY before running."
 fi
 
-chmod +x "$PROJECT_ROOT/run_macos.sh"
+chmod +x "$PROJECT_ROOT/scripts/macos/run_macos.sh"
 
 if [[ "$AUTOSTART" -eq 1 ]]; then
   LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
@@ -95,7 +96,7 @@ if [[ "$AUTOSTART" -eq 1 ]]; then
   <array>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>cd "$PROJECT_ROOT" && ./run_macos.sh</string>
+    <string>cd "$PROJECT_ROOT" && ./scripts/macos/run_macos.sh</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -112,6 +113,6 @@ fi
 
 echo ""
 echo "Install complete."
-echo "Run: ./run_macos.sh"
+echo "Run: ./scripts/macos/run_macos.sh"
 echo "Hotkey: $HOTKEY"
 echo "Grant Microphone and Accessibility permissions if macOS asks."
