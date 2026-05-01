@@ -16,10 +16,16 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
 SAMPLE_RATE = 16000
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+MIN_RECORDING_SECONDS = 3.0
+HOTKEY_MONITOR_INTERVAL_SECONDS = 0.5
+TOO_SHORT_STATUS_SECONDS = 1.2
+OPENROUTER_CHAT_COMPLETIONS_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 OPENROUTER_MODEL = "openai/whisper-1"
-OPENROUTER_FALLBACK_MODEL = "openai/gpt-audio-mini"
+OPENROUTER_LEGACY_CHAT_MODEL = "openai/gpt-audio-mini"
+OPENROUTER_FALLBACK_MODEL = ""
 DEFAULT_TRANSCRIPTION_PROMPT = "Transcribe this Russian speech to plain text. Return only the transcript."
+DEFAULT_TRANSCRIPTION_LANGUAGE = "ru"
 DEFAULT_TRANSCRIPTION_REFERER = "https://localhost/dictator"
 DEFAULT_TRANSCRIPTION_TITLE = "Dictator"
 
@@ -33,6 +39,7 @@ VK_V = 0x56
 VK_F10 = 0x79
 VK_LWIN = 0x5B
 VK_RWIN = 0x5C
+MAPVK_VSC_TO_VK_EX = 3
 TK_CTRL_MASK = 0x0004
 TK_SHIFT_MASK = 0x0001
 TK_ALT_MASK = 0x0008
@@ -69,6 +76,101 @@ def is_vk_pressed(vk: int) -> bool:
         return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
     except Exception:
         return False
+
+
+def vk_from_scan_code(scan_code: Any) -> int | None:
+    if os.name != "nt" or scan_code is None:
+        return None
+    try:
+        vk = ctypes.windll.user32.MapVirtualKeyW(int(scan_code), MAPVK_VSC_TO_VK_EX)
+    except Exception:
+        return None
+    return int(vk) if vk else None
+
+
+def vk_from_key_name(key_name: str) -> int | None:
+    key = key_name.strip().lower()
+    named_keys = {
+        "backspace": 0x08,
+        "tab": 0x09,
+        "enter": 0x0D,
+        "esc": 0x1B,
+        "escape": 0x1B,
+        "space": 0x20,
+        "page up": 0x21,
+        "page down": 0x22,
+        "end": 0x23,
+        "home": 0x24,
+        "left": 0x25,
+        "up": 0x26,
+        "right": 0x27,
+        "down": 0x28,
+        "insert": 0x2D,
+        "delete": 0x2E,
+    }
+    if key in named_keys:
+        return named_keys[key]
+    if len(key) == 1 and key.isalnum():
+        return ord(key.upper())
+    if key.startswith("f") and key[1:].isdigit():
+        number = int(key[1:])
+        if 1 <= number <= 24:
+            return 0x6F + number
+    return None
+
+
+def is_keyboard_event_still_pressed(event: Any, fallback_key_name: str) -> bool:
+    vk = vk_from_scan_code(getattr(event, "scan_code", None))
+    if vk is None:
+        vk = vk_from_key_name(fallback_key_name)
+    return bool(vk is not None and is_vk_pressed(vk))
+
+
+def safe_keyboard_is_pressed(key_name: str) -> bool | None:
+    try:
+        return bool(key_name and keyboard.is_pressed(key_name))
+    except Exception as exc:
+        print(f"keyboard.is_pressed failed key={key_name!r}: {exc}", file=sys.stderr)
+        return None
+
+
+def hotkey_probe_line(label: str, hotkey: str, event: Any | None = None, scan_code: Any | None = None) -> str:
+    event_name = getattr(event, "name", None) if event is not None else None
+    event_scan_code = getattr(event, "scan_code", None) if event is not None else None
+    effective_scan_code = event_scan_code if event_scan_code is not None else scan_code
+    scan_vk = vk_from_scan_code(effective_scan_code)
+    name_vk = vk_from_key_name(str(event_name or hotkey))
+    hotkey_vk = vk_from_key_name(hotkey)
+    scan_vk_pressed = is_vk_pressed(scan_vk) if scan_vk is not None else None
+    name_vk_pressed = is_vk_pressed(name_vk) if name_vk is not None else None
+    hotkey_vk_pressed = is_vk_pressed(hotkey_vk) if hotkey_vk is not None else None
+    keyboard_event_name_pressed = safe_keyboard_is_pressed(str(event_name)) if event_name else None
+    keyboard_hotkey_pressed = safe_keyboard_is_pressed(hotkey)
+    return (
+        f"{label} "
+        f"hotkey={hotkey!r} event_name={event_name!r} event_scan_code={event_scan_code!r} "
+        f"probe_scan_code={effective_scan_code!r} scan_vk={scan_vk!r} name_vk={name_vk!r} hotkey_vk={hotkey_vk!r} "
+        f"win32_scan_pressed={scan_vk_pressed!r} win32_name_pressed={name_vk_pressed!r} "
+        f"win32_hotkey_pressed={hotkey_vk_pressed!r} keyboard_event_name_pressed={keyboard_event_name_pressed!r} "
+        f"keyboard_hotkey_pressed={keyboard_hotkey_pressed!r}"
+    )
+
+
+def hotkey_probe_any_pressed(hotkey: str, event: Any | None = None, scan_code: Any | None = None) -> bool:
+    event_name = getattr(event, "name", None) if event is not None else None
+    event_scan_code = getattr(event, "scan_code", None) if event is not None else None
+    effective_scan_code = event_scan_code if event_scan_code is not None else scan_code
+    scan_vk = vk_from_scan_code(effective_scan_code)
+    name_vk = vk_from_key_name(str(event_name or hotkey))
+    hotkey_vk = vk_from_key_name(hotkey)
+    checks = [
+        is_vk_pressed(scan_vk) if scan_vk is not None else False,
+        is_vk_pressed(name_vk) if name_vk is not None else False,
+        is_vk_pressed(hotkey_vk) if hotkey_vk is not None else False,
+        bool(safe_keyboard_is_pressed(str(event_name))) if event_name else False,
+        bool(safe_keyboard_is_pressed(hotkey)),
+    ]
+    return any(checks)
 
 
 def get_modifier_parts(state: int, prefer_physical: bool = True) -> list[str]:
@@ -372,10 +474,37 @@ class OpenRouterWhisperTranscriber:
             OPENROUTER_FALLBACK_MODEL,
         )
         self.prompt = env_value("TRANSCRIPTION_PROMPT", "OPENROUTER_TRANSCRIPTION_PROMPT", DEFAULT_TRANSCRIPTION_PROMPT)
+        self.language = optional_env_value(
+            "TRANSCRIPTION_LANGUAGE",
+            "OPENROUTER_TRANSCRIPTION_LANGUAGE",
+            DEFAULT_TRANSCRIPTION_LANGUAGE,
+        )
         self.timeout = float(env_value("TRANSCRIPTION_TIMEOUT", "OPENROUTER_TIMEOUT", "120"))
         self.referer = optional_env_value("TRANSCRIPTION_REFERER", "OPENROUTER_HTTP_REFERER", DEFAULT_TRANSCRIPTION_REFERER)
         self.title = optional_env_value("TRANSCRIPTION_TITLE", "OPENROUTER_TITLE", DEFAULT_TRANSCRIPTION_TITLE)
         self.lock = threading.Lock()
+        self._normalize_openrouter_stt_settings()
+
+    def _uses_stt_endpoint(self) -> bool:
+        return self.api_url.rstrip("/").endswith("/audio/transcriptions")
+
+    def _uses_openrouter_stt_endpoint(self) -> bool:
+        return "openrouter.ai" in self.api_url.lower() and self._uses_stt_endpoint()
+
+    def _normalize_openrouter_stt_settings(self) -> None:
+        if self.api_url.rstrip("/") == OPENROUTER_CHAT_COMPLETIONS_API_URL:
+            print("Legacy OpenRouter chat transcription config detected; using /audio/transcriptions.")
+            self.api_url = OPENROUTER_API_URL
+
+        if not self._uses_openrouter_stt_endpoint():
+            return
+
+        if self.model == OPENROUTER_LEGACY_CHAT_MODEL:
+            print(f"Legacy OpenRouter chat audio model {self.model!r} detected; using {OPENROUTER_MODEL!r}.")
+            self.model = OPENROUTER_MODEL
+        if self.fallback_model == OPENROUTER_LEGACY_CHAT_MODEL:
+            print(f"Ignoring legacy chat fallback model {self.fallback_model!r} for STT endpoint.")
+            self.fallback_model = ""
 
     def load(self) -> None:
         with self.lock:
@@ -387,7 +516,9 @@ class OpenRouterWhisperTranscriber:
                 raise RuntimeError("TRANSCRIPTION_API_KEY is not set. Put it in .env or the process environment.")
 
             self.api_key = api_key
-            print(f"Transcription API ready: {self.model}")
+            print(f"Transcription API ready: {self.model} url={self.api_url}")
+            if self._uses_stt_endpoint() and self.language:
+                print(f"Transcription language hint: {self.language}")
             if self.fallback_model and self.fallback_model != self.model:
                 print(f"Transcription fallback model: {self.fallback_model}")
 
@@ -410,28 +541,39 @@ class OpenRouterWhisperTranscriber:
 
     def _post_transcription(self, model: str, audio_data: str) -> dict[str, Any]:
         started_at = time.monotonic()
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": self.prompt,
-                        },
-                        {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": audio_data,
-                                "format": "wav",
+        if self._uses_stt_endpoint():
+            payload: dict[str, Any] = {
+                "model": model,
+                "input_audio": {
+                    "data": audio_data,
+                    "format": "wav",
+                },
+            }
+            if self.language:
+                payload["language"] = self.language
+        else:
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": self.prompt,
                             },
-                        },
-                    ],
-                }
-            ],
-            "stream": False,
-        }
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": audio_data,
+                                    "format": "wav",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "stream": False,
+            }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -505,10 +647,20 @@ class DictatorApp:
         self.transcriber = OpenRouterWhisperTranscriber()
         self.jobs: queue.Queue[Path | None] = queue.Queue()
         self.state_lock = threading.Lock()
+        self.status_lock = threading.Lock()
+        self.status = "Ready"
+        self.status_generation = 0
         self.recording = False
         self.running = True
         self.icon: Any | None = None
         self.recording_target_hwnd: int | None = None
+        self.recording_started_at: float | None = None
+        self.recording_hotkey_name: str | None = None
+        self.recording_hotkey_scan_code: Any | None = None
+        self.recording_monitor_stop = threading.Event()
+        self.hotkey_down = False
+        self.ignored_press_repeat_count = 0
+        self.last_ignored_press_log_at = 0.0
         self.hotkey_hooks: list[tuple[str, Any]] = []
         self.hotkey_lock = threading.Lock()
         self.hotkey_dialog_open = False
@@ -516,8 +668,10 @@ class DictatorApp:
     def run(self) -> None:
         print(f"Hotkey: {self.hotkey}")
         print(f"Suppress hotkey in target app: {self.suppress_hotkey}")
-        print("Hold the hotkey to record. Release it to transcribe and paste.")
+        print("Press the hotkey to start recording. Press it again to transcribe and paste.")
         print(f"Python executable: {sys.executable}")
+        print(f"Minimum recording duration before transcription: {MIN_RECORDING_SECONDS:.2f}s")
+        print(f"Hotkey monitor interval: {HOTKEY_MONITOR_INTERVAL_SECONDS:.2f}s")
 
         worker = threading.Thread(target=self._worker_loop, daemon=True)
         worker.start()
@@ -538,7 +692,6 @@ class DictatorApp:
         with self.hotkey_lock:
             self._unregister_hotkey_locked()
             if "+" in hotkey:
-                print("Combination hotkey detected; using toggle mode.")
                 handle = keyboard.add_hotkey(hotkey, self.toggle, suppress=self.suppress_hotkey)
                 self.hotkey_hooks.append(("hotkey", handle))
             else:
@@ -554,7 +707,7 @@ class DictatorApp:
                 )
                 self.hotkey_hooks.append(("key", hotkey))
             self.hotkey = hotkey
-            print(f"Registered hotkey: {self.hotkey}")
+            print(f"Registered toggle hotkey: {self.hotkey}")
 
     def _unregister_hotkey_locked(self) -> None:
         for kind, handle in self.hotkey_hooks:
@@ -568,6 +721,7 @@ class DictatorApp:
             except Exception as exc:
                 print(f"Failed to unregister hotkey hook: {exc}", file=sys.stderr)
         self.hotkey_hooks = []
+        self.hotkey_down = False
 
     def change_hotkey(self, hotkey: str) -> None:
         hotkey = hotkey.strip().lower()
@@ -590,55 +744,126 @@ class DictatorApp:
         print(f"Hotkey changed: {previous} -> {hotkey}")
         self._set_status(f"Ready ({hotkey})")
 
-    def toggle(self) -> None:
+    def toggle(self, event: Any | None = None, reason: str = "toggle") -> None:
         print("Hotkey toggle event")
         with self.state_lock:
             is_recording = self.recording
         if is_recording:
-            self.stop_recording()
+            self.stop_recording(event=event, reason=reason)
         else:
-            self.start_recording()
+            self.start_recording(event=event, reason=reason)
 
     def _on_hotkey_press(self, event: Any) -> None:
         with self.state_lock:
-            is_recording = self.recording
-        if is_recording:
-            return
+            if self.hotkey_down:
+                self.ignored_press_repeat_count += 1
+                now = time.monotonic()
+                if now - self.last_ignored_press_log_at >= 1.0:
+                    self.last_ignored_press_log_at = now
+                    print(
+                        f"Hotkey press autorepeat ignored count={self.ignored_press_repeat_count} "
+                        f"name={getattr(event, 'name', None)} scan_code={getattr(event, 'scan_code', None)}"
+                    )
+                return
+            self.hotkey_down = True
+        self.ignored_press_repeat_count = 0
+        print(hotkey_probe_line("Hotkey press probe", self.hotkey, event=event))
         print(f"Hotkey press event name={getattr(event, 'name', None)} scan_code={getattr(event, 'scan_code', None)}")
-        self.start_recording()
+        self.toggle(event=event, reason="hotkey")
 
     def _on_hotkey_release(self, event: Any) -> None:
+        with self.state_lock:
+            self.hotkey_down = False
         print(f"Hotkey release event name={getattr(event, 'name', None)} scan_code={getattr(event, 'scan_code', None)}")
-        self.stop_recording()
 
-    def start_recording(self) -> None:
+    def start_recording(self, event: Any | None = None, reason: str = "manual") -> None:
         with self.state_lock:
             if self.recording:
                 return
             self.recording = True
+            self.recording_started_at = time.monotonic()
+            self.recording_hotkey_name = getattr(event, "name", None) if event is not None else self.hotkey
+            self.recording_hotkey_scan_code = getattr(event, "scan_code", None) if event is not None else None
             self.recording_target_hwnd = get_foreground_window_handle()
+            self.recording_monitor_stop.clear()
+            self.ignored_press_repeat_count = 0
+            self.last_ignored_press_log_at = 0.0
+            print(
+                f"Recording start reason={reason} hotkey={self.hotkey!r} "
+                f"event_name={self.recording_hotkey_name!r} event_scan_code={self.recording_hotkey_scan_code!r}"
+            )
             print(f"Recording target window: {describe_window(self.recording_target_hwnd)}")
+            print(hotkey_probe_line("Recording start probe", self.hotkey, event=event, scan_code=self.recording_hotkey_scan_code))
             self.recorder.start()
+            threading.Thread(target=self._monitor_hotkey_state, args=(self.recording_started_at,), daemon=True).start()
             print("Recording...")
             self._set_status("Recording")
 
-    def stop_recording(self) -> None:
+    def stop_recording(self, event: Any | None = None, reason: str = "manual") -> None:
         with self.state_lock:
             if not self.recording:
+                print(f"Stop recording ignored reason={reason}; recording is not active.")
                 return
             self.recording = False
+            self.recording_monitor_stop.set()
+            started_at = self.recording_started_at
+            duration = time.monotonic() - started_at if started_at is not None else 0.0
+            print(
+                f"Recording stop reason={reason} duration={duration:.3f}s "
+                f"min_required={MIN_RECORDING_SECONDS:.3f}s"
+            )
+            print(hotkey_probe_line("Recording stop probe", self.hotkey, event=event, scan_code=self.recording_hotkey_scan_code))
             wav_path = self.recorder.stop_to_wav()
+            self.recording_started_at = None
+            self.recording_hotkey_name = None
+            self.recording_hotkey_scan_code = None
 
-        self._set_status("Transcribing")
+        if duration < MIN_RECORDING_SECONDS:
+            if wav_path is not None:
+                print(f"Discarding recording shorter than minimum path={wav_path} duration={duration:.3f}s")
+            else:
+                print(f"Discarding empty recording shorter than minimum duration={duration:.3f}s")
+            generation = self._set_status("Too short")
+            self._schedule_ready_after_too_short(generation)
+            return
+
         if wav_path is not None:
+            self._set_status("Transcribing")
             print(f"Queue transcription job path={wav_path}")
             self.jobs.put(wav_path)
         else:
             print("Recording too short or empty.")
             self._set_status("Ready")
 
+    def _monitor_hotkey_state(self, monitor_started_at: float | None) -> None:
+        tick = 0
+        while not self.recording_monitor_stop.wait(HOTKEY_MONITOR_INTERVAL_SECONDS):
+            with self.state_lock:
+                if not self.recording or self.recording_started_at != monitor_started_at:
+                    return
+                started_at = self.recording_started_at
+                scan_code = self.recording_hotkey_scan_code
+            elapsed = time.monotonic() - started_at if started_at is not None else 0.0
+            tick += 1
+            print(
+                f"Hotkey monitor tick={tick} elapsed={elapsed:.3f}s "
+                f"{hotkey_probe_line('state', self.hotkey, scan_code=scan_code)}"
+            )
+
+    def _schedule_ready_after_too_short(self, generation: int) -> None:
+        def reset_if_still_too_short() -> None:
+            time.sleep(TOO_SHORT_STATUS_SECONDS)
+            with self.status_lock:
+                should_reset = self.status == "Too short" and self.status_generation == generation
+            if should_reset:
+                print(f"Too short status elapsed {TOO_SHORT_STATUS_SECONDS:.1f}s; returning to Ready.")
+                self._set_status("Ready")
+
+        threading.Thread(target=reset_if_still_too_short, daemon=True).start()
+
     def quit(self) -> None:
         self.running = False
+        self.recording_monitor_stop.set()
         with self.hotkey_lock:
             self._unregister_hotkey_locked()
         with self.state_lock:
@@ -843,21 +1068,28 @@ class DictatorApp:
         self.icon.run()
         return True
 
-    def _set_status(self, status: str) -> None:
+    def _set_status(self, status: str) -> int:
+        with self.status_lock:
+            self.status = status
+            self.status_generation += 1
+            generation = self.status_generation
         print(f"Status: {status}")
         icon = self.icon
         if icon is None:
-            return
+            return generation
         icon.title = f"Dictator: {status}"
         make_icon = getattr(self, "_make_icon", None)
         if make_icon is None:
-            return
+            return generation
         if status == "Recording":
             icon.icon = make_icon((230, 80, 70))
         elif status == "Transcribing" or status == "Checking API key":
             icon.icon = make_icon((230, 180, 70))
+        elif status == "Too short":
+            icon.icon = make_icon((245, 245, 245))
         else:
             icon.icon = make_icon((80, 190, 120))
+        return generation
 
 
 def parse_args() -> argparse.Namespace:
@@ -865,14 +1097,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hotkey",
         default=os.environ.get("DICTATOR_HOTKEY", "f10"),
-        help="Global hold-to-talk hotkey. Defaults to DICTATOR_HOTKEY or f10.",
+        help="Global toggle hotkey. Press once to record, press again to transcribe and paste.",
     )
     parser.add_argument("--lazy", action="store_true", help="Load model on first transcription instead of startup.")
     parser.add_argument("--no-tray", action="store_true", help="Run without tray icon.")
     parser.add_argument(
         "--allow-hotkey-through",
         action="store_true",
-        help="Do not suppress the dictation hotkey in the focused application.",
+        help="Deprecated: hotkey passthrough is now the default.",
+    )
+    parser.add_argument(
+        "--suppress-hotkey",
+        action="store_true",
+        help="Suppress the dictation hotkey in the focused application. Can interfere with keyboard input.",
     )
     return parser.parse_args()
 
@@ -883,7 +1120,7 @@ def main() -> None:
         hotkey=args.hotkey,
         lazy=args.lazy,
         no_tray=args.no_tray,
-        suppress_hotkey=not args.allow_hotkey_through,
+        suppress_hotkey=args.suppress_hotkey,
     )
     try:
         app.run()

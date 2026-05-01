@@ -1,6 +1,6 @@
 # Dictator
 
-Hotkey dictation for Windows and macOS. Press a global hotkey, speak, release it; the app sends the recording to the configured transcription provider, copies the transcript to the clipboard, and pastes it into the active text field.
+Hotkey dictation for Windows and macOS. Press a global hotkey, speak, press it again; the app sends the recording to the configured transcription provider, copies the transcript to the clipboard, and pastes it into the active text field.
 
 There are separate launchers for each OS:
 
@@ -22,7 +22,7 @@ runtime/               local logs and last recording, ignored by Git
 
 - Global hotkey dictation.
 - Configurable hotkey through `.env` or launch arguments.
-- Configurable transcription provider. The default is OpenRouter `openai/whisper-1` with `openai/gpt-audio-mini` fallback.
+- Configurable transcription provider. The default is OpenRouter STT `openai/whisper-1`.
 - Tray/menu-bar icon with status dot: green ready, red recording, yellow transcribing.
 - Local debug log and last recorded WAV.
 - Optional autostart on Windows login or macOS login.
@@ -145,15 +145,16 @@ f10
 Use it like this:
 
 1. Click into any text field.
-2. Hold the configured hotkey.
+2. Press the configured hotkey.
 3. Speak.
-4. Release the hotkey.
+4. Press the hotkey again.
 5. Wait for the transcript to paste.
 
 Hotkey behavior:
 
-- Single key, for example `f10` or `f9`: hold-to-talk.
-- Combination, for example `ctrl+alt+space` on Windows or `cmd+shift+d` on macOS: toggle mode. Press once to start recording, press again to stop.
+- Single key, for example `f10` or `f9`: toggle mode.
+- Combination, for example `ctrl+alt+space` on Windows or `cmd+shift+d` on macOS: toggle mode.
+- Press once to start recording, then press again to stop, transcribe, and paste.
 
 ## Configuration
 
@@ -162,9 +163,10 @@ The installers create `.env`. You can also copy `.env.example` to `.env` and edi
 ```text
 TRANSCRIPTION_API_KEY=your_key_here
 TRANSCRIPTION_MODEL=openai/whisper-1
-TRANSCRIPTION_FALLBACK_MODEL=openai/gpt-audio-mini
-TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/chat/completions
+TRANSCRIPTION_FALLBACK_MODEL=
+TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/audio/transcriptions
 TRANSCRIPTION_TIMEOUT=120
+TRANSCRIPTION_LANGUAGE=ru
 TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.
 TRANSCRIPTION_REFERER=https://localhost/dictator
 TRANSCRIPTION_TITLE=Dictator
@@ -175,13 +177,14 @@ DICTATOR_LOG_FILE=runtime/dictator.log
 Provider settings live in `.env`, so you can switch API keys or compatible providers without editing code:
 
 - `TRANSCRIPTION_API_KEY`: provider API key.
-- `TRANSCRIPTION_API_URL`: chat completions endpoint.
+- `TRANSCRIPTION_API_URL`: transcription endpoint. The default OpenRouter endpoint is `/audio/transcriptions`.
 - `TRANSCRIPTION_MODEL`: primary model.
 - `TRANSCRIPTION_FALLBACK_MODEL`: optional retry model; leave empty to disable fallback.
-- `TRANSCRIPTION_PROMPT`: transcription instruction sent with the audio.
+- `TRANSCRIPTION_LANGUAGE`: optional ISO-639-1 language hint, for example `ru` or `en`.
+- `TRANSCRIPTION_PROMPT`: transcription instruction sent with the audio only when using a legacy `chat/completions` endpoint.
 - `TRANSCRIPTION_REFERER` and `TRANSCRIPTION_TITLE`: optional metadata headers; useful for OpenRouter, usually ignored by other providers.
 
-The built-in request format is OpenAI-compatible `chat/completions` JSON with audio passed as `input_audio` in the message content. That works for OpenRouter and may work with other providers that implement the same format. If a provider uses a different endpoint shape, for example multipart `/audio/transcriptions`, add a small adapter in `OpenRouterWhisperTranscriber._post_transcription`.
+The built-in request format is OpenRouter STT JSON with base64 audio passed as `input_audio` to `/audio/transcriptions`, so the API returns transcript text instead of a chat answer. Legacy OpenRouter settings that used `/chat/completions` are automatically moved to the STT endpoint at runtime, and the old chat/audio fallback `openai/gpt-audio-mini` is disabled for STT.
 
 Existing `.env` files with `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL`, `OPENROUTER_API_URL`, `OPENROUTER_TIMEOUT`, and `OPENROUTER_TRANSCRIPTION_PROMPT` still work. New `TRANSCRIPTION_*` variables take priority when both are present.
 
@@ -240,7 +243,7 @@ Sent Command+V result: True
 
 If recording is empty or too quiet, set the correct default microphone in system settings.
 
-If the primary transcription model returns errors, keep the fallback enabled. The app will retry with `TRANSCRIPTION_FALLBACK_MODEL`.
+If the primary transcription model returns errors, set `TRANSCRIPTION_FALLBACK_MODEL` to another STT model. Leave it empty to avoid falling back to chat/audio models that may answer the message instead of transcribing it.
 
 If the hotkey conflicts with another app, set another one in `.env`.
 

@@ -67,9 +67,10 @@ if [[ -n "$API_KEY" ]]; then
   cat > "$PROJECT_ROOT/.env" <<EOF
 TRANSCRIPTION_API_KEY=$API_KEY
 TRANSCRIPTION_MODEL=openai/whisper-1
-TRANSCRIPTION_FALLBACK_MODEL=openai/gpt-audio-mini
-TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/chat/completions
+TRANSCRIPTION_FALLBACK_MODEL=
+TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/audio/transcriptions
 TRANSCRIPTION_TIMEOUT=120
+TRANSCRIPTION_LANGUAGE=ru
 TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.
 TRANSCRIPTION_REFERER=https://localhost/dictator
 TRANSCRIPTION_TITLE=Dictator

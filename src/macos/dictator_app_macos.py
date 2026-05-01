@@ -16,10 +16,13 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
 SAMPLE_RATE = 16000
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_CHAT_COMPLETIONS_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 OPENROUTER_MODEL = "openai/whisper-1"
-OPENROUTER_FALLBACK_MODEL = "openai/gpt-audio-mini"
+OPENROUTER_LEGACY_CHAT_MODEL = "openai/gpt-audio-mini"
+OPENROUTER_FALLBACK_MODEL = ""
 DEFAULT_TRANSCRIPTION_PROMPT = "Transcribe this Russian speech to plain text. Return only the transcript."
+DEFAULT_TRANSCRIPTION_LANGUAGE = "ru"
 DEFAULT_TRANSCRIPTION_REFERER = "https://localhost/dictator"
 DEFAULT_TRANSCRIPTION_TITLE = "Dictator"
 
@@ -272,10 +275,37 @@ class OpenRouterWhisperTranscriber:
             OPENROUTER_FALLBACK_MODEL,
         )
         self.prompt = env_value("TRANSCRIPTION_PROMPT", "OPENROUTER_TRANSCRIPTION_PROMPT", DEFAULT_TRANSCRIPTION_PROMPT)
+        self.language = optional_env_value(
+            "TRANSCRIPTION_LANGUAGE",
+            "OPENROUTER_TRANSCRIPTION_LANGUAGE",
+            DEFAULT_TRANSCRIPTION_LANGUAGE,
+        )
         self.timeout = float(env_value("TRANSCRIPTION_TIMEOUT", "OPENROUTER_TIMEOUT", "120"))
         self.referer = optional_env_value("TRANSCRIPTION_REFERER", "OPENROUTER_HTTP_REFERER", DEFAULT_TRANSCRIPTION_REFERER)
         self.title = optional_env_value("TRANSCRIPTION_TITLE", "OPENROUTER_TITLE", DEFAULT_TRANSCRIPTION_TITLE)
         self.lock = threading.Lock()
+        self._normalize_openrouter_stt_settings()
+
+    def _uses_stt_endpoint(self) -> bool:
+        return self.api_url.rstrip("/").endswith("/audio/transcriptions")
+
+    def _uses_openrouter_stt_endpoint(self) -> bool:
+        return "openrouter.ai" in self.api_url.lower() and self._uses_stt_endpoint()
+
+    def _normalize_openrouter_stt_settings(self) -> None:
+        if self.api_url.rstrip("/") == OPENROUTER_CHAT_COMPLETIONS_API_URL:
+            print("Legacy OpenRouter chat transcription config detected; using /audio/transcriptions.")
+            self.api_url = OPENROUTER_API_URL
+
+        if not self._uses_openrouter_stt_endpoint():
+            return
+
+        if self.model == OPENROUTER_LEGACY_CHAT_MODEL:
+            print(f"Legacy OpenRouter chat audio model {self.model!r} detected; using {OPENROUTER_MODEL!r}.")
+            self.model = OPENROUTER_MODEL
+        if self.fallback_model == OPENROUTER_LEGACY_CHAT_MODEL:
+            print(f"Ignoring legacy chat fallback model {self.fallback_model!r} for STT endpoint.")
+            self.fallback_model = ""
 
     def load(self) -> None:
         with self.lock:
@@ -287,7 +317,9 @@ class OpenRouterWhisperTranscriber:
                 raise RuntimeError("TRANSCRIPTION_API_KEY is not set. Put it in .env or the process environment.")
 
             self.api_key = api_key
-            print(f"Transcription API ready: {self.model}")
+            print(f"Transcription API ready: {self.model} url={self.api_url}")
+            if self._uses_stt_endpoint() and self.language:
+                print(f"Transcription language hint: {self.language}")
             if self.fallback_model and self.fallback_model != self.model:
                 print(f"Transcription fallback model: {self.fallback_model}")
 
@@ -310,19 +342,30 @@ class OpenRouterWhisperTranscriber:
 
     def _post_transcription(self, model: str, audio_data: str) -> dict[str, Any]:
         started_at = time.monotonic()
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": self.prompt},
-                        {"type": "input_audio", "input_audio": {"data": audio_data, "format": "wav"}},
-                    ],
-                }
-            ],
-            "stream": False,
-        }
+        if self._uses_stt_endpoint():
+            payload: dict[str, Any] = {
+                "model": model,
+                "input_audio": {
+                    "data": audio_data,
+                    "format": "wav",
+                },
+            }
+            if self.language:
+                payload["language"] = self.language
+        else:
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": self.prompt},
+                            {"type": "input_audio", "input_audio": {"data": audio_data, "format": "wav"}},
+                        ],
+                    }
+                ],
+                "stream": False,
+            }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -413,14 +456,14 @@ class MacDictatorApp:
             hotkey = "f10"
         self.hotkey = hotkey
         self.hotkey_parts = parts
-        self.toggle_mode = len(self.hotkey_parts) > 1
         self.pressed.clear()
         self.combo_down = False
         print(f"Applied hotkey: {self.hotkey}")
 
     def run(self) -> None:
         print(f"Hotkey: {self.hotkey}")
-        print(f"Hotkey mode: {'toggle' if self.toggle_mode else 'hold-to-talk'}")
+        print("Hotkey mode: toggle")
+        print("Press the hotkey to start recording. Press it again to transcribe and paste.")
         print("macOS requires Accessibility and Microphone permissions for your terminal/Python.")
         print(f"Frontmost app at startup: {describe_frontmost_app()}")
 
@@ -448,42 +491,25 @@ class MacDictatorApp:
         with self.key_lock:
             self.pressed.update(names)
             is_match = self.hotkey_parts.issubset(self.pressed)
-
-            if self.toggle_mode:
-                if not is_match or self.combo_down:
-                    return
-                self.combo_down = True
-            else:
-                if not is_match:
-                    return
-                with self.state_lock:
-                    if self.recording:
-                        return
+            if not is_match or self.combo_down:
+                return
+            self.combo_down = True
 
         print(f"Hotkey press event names={sorted(names)}")
-        if self.toggle_mode:
-            self.toggle()
-        else:
-            self.start_recording()
+        self.toggle()
 
     def _on_key_release(self, key: keyboard.Key | keyboard.KeyCode) -> None:
         with self.hotkey_lock:
             if self.hotkey_dialog_open:
                 return
         names = key_names(key)
-        should_stop = False
+        is_hotkey_release = bool(self.hotkey_parts.intersection(names))
         with self.key_lock:
             self.pressed.difference_update(names)
-            if self.toggle_mode:
-                if not self.hotkey_parts.issubset(self.pressed):
-                    self.combo_down = False
-            else:
-                if self.hotkey_parts.intersection(names):
-                    should_stop = True
-
-        if should_stop:
+            if not self.hotkey_parts.issubset(self.pressed):
+                self.combo_down = False
+        if is_hotkey_release:
             print(f"Hotkey release event names={sorted(names)}")
-            self.stop_recording()
 
     def toggle(self) -> None:
         print("Hotkey toggle event")
@@ -672,7 +698,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hotkey",
         default=os.environ.get("DICTATOR_HOTKEY", "f10"),
-        help="Global hotkey. Single keys are hold-to-talk; combinations are toggle mode.",
+        help="Global toggle hotkey. Press once to record, press again to transcribe and paste.",
     )
     parser.add_argument("--lazy", action="store_true", help="Load API key on first transcription instead of startup.")
     parser.add_argument("--no-tray", action="store_true", help="Run without menu bar icon.")

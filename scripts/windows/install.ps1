@@ -69,9 +69,10 @@ if ($ApiKey) {
     $envContent = @(
         "TRANSCRIPTION_API_KEY=$ApiKey",
         "TRANSCRIPTION_MODEL=openai/whisper-1",
-        "TRANSCRIPTION_FALLBACK_MODEL=openai/gpt-audio-mini",
-        "TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/chat/completions",
+        "TRANSCRIPTION_FALLBACK_MODEL=",
+        "TRANSCRIPTION_API_URL=https://openrouter.ai/api/v1/audio/transcriptions",
         "TRANSCRIPTION_TIMEOUT=120",
+        "TRANSCRIPTION_LANGUAGE=ru",
         "TRANSCRIPTION_PROMPT=Transcribe this Russian speech to plain text. Return only the transcript.",
         "TRANSCRIPTION_REFERER=https://localhost/dictator",
         "TRANSCRIPTION_TITLE=Dictator",
