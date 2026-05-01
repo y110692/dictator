@@ -1,4 +1,4 @@
-# Dictator Whisper
+# Dictator
 
 Hotkey dictation for Windows and macOS. Press a global hotkey, speak, release it; the app sends the recording to the configured transcription provider, copies the transcript to the clipboard, and pastes it into the active text field.
 
